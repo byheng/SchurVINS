@@ -12,7 +12,7 @@
 
 #include <algorithm>
 #include <stdexcept>
-#include <fast/fast.h>
+// #include <fast/fast.h>
 #include <vikit/math_utils.h>
 #include <vikit/vision.h>
 

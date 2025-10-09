@@ -30,7 +30,7 @@
   <depend>vikit_ros</depend>
   <depend>eigen_catkin</depend>
   <depend>minkindr</depend>
-  <depend>fast</depend>
+  <!-- <depend>fast</depend> -->
   <depend>opengv</depend>
   <depend>cv_bridge</depend>
   <depend>glog_catkin</depend>

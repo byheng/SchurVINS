@@ -11,10 +11,11 @@
 #include <algorithm>
 #include <numeric>
 
-#include <fast/fast.h>
+// #include <fast/fast.h>
 #include <vikit/vision.h>
 #include <opencv2/imgproc/imgproc.hpp>
 #include <opencv2/highgui/highgui.hpp>
+#include <opencv2/features2d.hpp>
 #include <svo/common/frame.h>
 #include <svo/common/camera.h>
 #include <svo/common/logging.h>
@@ -154,43 +155,98 @@ void fastDetector(
   CHECK_EQ(corners.size(), grid.occupancy_.size());
   CHECK_LE(max_level, img_pyr.size()-1);
 
+#define USE_ORB
+#ifdef USE_ORB
+  // 使用 ORB 在每个图像金字塔层上进行特征点检测（不使用其内部金字塔）
+  // 将原先 FAST 的阈值作为 ORB 的 fastThreshold，边界作为 edgeThreshold。
+  const int orb_edge = std::max(0, border);
+  // 设定较大的 nfeatures，后续会通过网格与分数筛选。
+  const int nfeatures = 5000;
+
   for(size_t level=min_level; level<=max_level; ++level)
   {
     const int scale = (1<<level);
-    std::vector<fast::fast_xy> fast_corners;
-#if __SSE2__
-    fast::fast_corner_detect_10_sse2(
-          (fast::fast_byte*) img_pyr[level].data, img_pyr[level].cols,
-          img_pyr[level].rows, img_pyr[level].step, threshold, fast_corners);
-#elif HAVE_FAST_NEON
-    fast::fast_corner_detect_9_neon(
-          (fast::fast_byte*) img_pyr[level].data, img_pyr[level].cols,
-          img_pyr[level].rows, img_pyr[level].step, threshold, fast_corners);
-#else
-    fast::fast_corner_detect_10(
-          (fast::fast_byte*) img_pyr[L].data, img_pyr[L].cols,
-          img_pyr[L].rows, img_pyr[L].step, threshold, fast_corners);
-#endif
-    std::vector<int> scores, nm_corners;
-    fast::fast_corner_score_10((fast::fast_byte*) img_pyr[level].data, img_pyr[level].step,
-                               fast_corners, threshold, scores);
-    fast::fast_nonmax_3x3(fast_corners, scores, nm_corners);
+    const cv::Mat& img = img_pyr[level];
+    const int maxw = img.cols - border;
+    const int maxh = img.rows - border;
 
-    const int maxw = img_pyr[level].cols-border;
-    const int maxh = img_pyr[level].rows-border;
-    for(const int& i : nm_corners)
+    const int desired_features = static_cast<int>(grid.n_cols * grid.n_rows * 4);
+    cv::Ptr<cv::ORB> orb = cv::ORB::create(
+        std::max(nfeatures, desired_features), // number of features (upper bound)
+        1.0f,                 // scaleFactor (unused when nlevels=1)
+        1,                    // nlevels: use only this level
+        orb_edge,             // edgeThreshold: respect SVO border setting
+        0,                    // firstLevel
+        2,                    // WTA_K
+        cv::ORB::FAST_SCORE,  // scoreType: FAST score aligns with original thresholds
+        31,                   // patchSize
+        threshold);           // fastThreshold
+
+    std::vector<cv::KeyPoint> kps;
+    orb->detect(img, kps);
+    if(kps.empty())
     {
-      fast::fast_xy& xy = fast_corners.at(i);
-      if(xy.x < border || xy.y < border || xy.x >= maxw || xy.y >= maxh)
+      // Fallback to pure FAST if ORB yielded no keypoints on this level
+      LOG(ERROR) << "ORB failed to detect keypoints, falling back to FAST";
+      cv::FAST(img, kps, threshold, /*nonmaxSuppression=*/true);
+    }
+
+    for(const auto& kp : kps)
+    {
+      const int x = static_cast<int>(kp.pt.x);
+      const int y = static_cast<int>(kp.pt.y);
+      if(x < border || y < border || x >= maxw || y >= maxh)
         continue;
-      const size_t k = grid.getCellIndex(xy.x, xy.y, scale);
+      const size_t k = grid.getCellIndex(x, y, scale);
       if(grid.occupancy_.at(k))
         continue;
-      const float score = scores.at(i); //vk::shiTomasiScore(img_pyr[L], xy.x, xy.y);
+      const float score = (kp.response > 0.0f) ? kp.response : static_cast<float>(threshold + 1.0); // ensure passing threshold when FAST fallback sets response=0
       if(score > corners.at(k).score)
-        corners.at(k) = Corner(xy.x*scale, xy.y*scale, score, level, 0.0f);
+      {
+        const float angle_rad = kp.angle >= 0.0f ? kp.angle * static_cast<float>(CV_PI/180.0) : 0.0f;
+        corners.at(k) = Corner(x*scale, y*scale, score, level, angle_rad);
+      }
     }
   }
+#else // FAST
+  for(size_t level=min_level; level<=max_level; ++level)
+    {
+      const int scale = (1<<level);
+      std::vector<fast::fast_xy> fast_corners;
+  #if __SSE2__
+      fast::fast_corner_detect_10_sse2(
+            (fast::fast_byte*) img_pyr[level].data, img_pyr[level].cols,
+            img_pyr[level].rows, img_pyr[level].step, threshold, fast_corners);
+  #elif HAVE_FAST_NEON
+      fast::fast_corner_detect_9_neon(
+            (fast::fast_byte*) img_pyr[level].data, img_pyr[level].cols,
+            img_pyr[level].rows, img_pyr[level].step, threshold, fast_corners);
+  #else
+      fast::fast_corner_detect_10(
+            (fast::fast_byte*) img_pyr[L].data, img_pyr[L].cols,
+            img_pyr[L].rows, img_pyr[L].step, threshold, fast_corners);
+  #endif
+      std::vector<int> scores, nm_corners;
+      fast::fast_corner_score_10((fast::fast_byte*) img_pyr[level].data, img_pyr[level].step,
+                                fast_corners, threshold, scores);
+      fast::fast_nonmax_3x3(fast_corners, scores, nm_corners);
+
+      const int maxw = img_pyr[level].cols-border;
+      const int maxh = img_pyr[level].rows-border;
+      for(const int& i : nm_corners)
+      {
+        fast::fast_xy& xy = fast_corners.at(i);
+        if(xy.x < border || xy.y < border || xy.x >= maxw || xy.y >= maxh)
+          continue;
+        const size_t k = grid.getCellIndex(xy.x, xy.y, scale);
+        if(grid.occupancy_.at(k))
+          continue;
+        const float score = scores.at(i); //vk::shiTomasiScore(img_pyr[L], xy.x, xy.y);
+        if(score > corners.at(k).score)
+          corners.at(k) = Corner(xy.x*scale, xy.y*scale, score, level, 0.0f);
+      }
+  }
+#endif
 }
 
 //------------------------------------------------------------------------------
