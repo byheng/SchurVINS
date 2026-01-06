@@ -73,5 +73,5 @@ RUN mkdir -p /catkin_ws/src/SchurVINS/results && mkdir -p /catkin_ws/src/SchurVI
 RUN apt install ros-noetic-pcl-ros python3-pip zip -y && pip install evo
 WORKDIR /catkin_ws
 RUN catkin config --cmake-args -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-RUN source /opt/ros/noetic/setup.bash && catkin build
+# RUN source /opt/ros/noetic/setup.bash && catkin build
 RUN jq -s 'add' $(find build -name compile_commands.json) > compile_commands.json
