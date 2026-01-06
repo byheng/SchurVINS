@@ -58,6 +58,7 @@ docker pull ghcr.io/byheng/schurvins:v1.0.0
 
 ```bash
 # Run with X11 forwarding for visualization
+# Note: xhost allows Docker to access your X server. Reset with 'xhost -local:docker' after use
 xhost +local:docker
 docker run -it --rm \
   --name schurvins \
@@ -65,6 +66,8 @@ docker run -it --rm \
   -v /tmp/.X11-unix:/tmp/.X11-unix \
   -v $HOME/datasets:/datasets \
   ghcr.io/byheng/schurvins:latest
+# Optionally, revoke access after use:
+# xhost -local:docker
 ```
 
 Inside the container, the workspace is already built at `/catkin_ws`. You can directly run:
@@ -74,10 +77,10 @@ roslaunch svo_ros euroc_vio_stereo.launch
 ```
 
 ### Available Tags
-- `latest`: Latest build from the default branch
+- `latest`: Latest build from the default branch (determined by repository settings)
 - `aarch64`: Latest build from the aarch64 branch
 - `main`, `master`: Builds from respective branches
-- Version tags (e.g., `v1.0.0`, `v1.0`, `v1`): Specific releases
+- Version tags (e.g., `v1.0.0`, `v1.0`, `v1`): Specific releases when tagged
 
 ## 3. Build
 
